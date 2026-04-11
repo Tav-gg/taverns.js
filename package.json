@@ -1,0 +1,38 @@
+{
+  "name": "taverns.js",
+  "version": "0.1.0",
+  "description": "SDK for building Tavern bots for the Taverns platform",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": ["taverns", "bot", "sdk", "api", "tav"],
+  "license": "Apache-2.0",
+  "author": "Tav <https://github.com/Tav-gg>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Tav-gg/taverns.js.git"
+  },
+  "homepage": "https://github.com/Tav-gg/taverns.js#readme",
+  "bugs": {
+    "url": "https://github.com/Tav-gg/taverns.js/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "dependencies": {
+    "ws": "^8.0.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.0.0",
+    "typescript": "^5.0.0"
+  }
+}
