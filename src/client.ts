@@ -62,7 +62,7 @@ export interface ActionableMessage extends Message {
   /** The tavern this message belongs to. */
   tavernId: string;
   /** Reply to this message in the same channel. */
-  reply(content: string): Promise<Message>;
+  reply(content: string | SendMessageOptions): Promise<Message>;
   /** Edit this message (only works for messages sent by the bot). */
   edit(content: string): Promise<Message>;
   /** Delete this message. */
@@ -85,6 +85,8 @@ export interface ActionableInteraction extends Interaction {
   deferReply(): Promise<void>;
   /** Send a follow-up message after replying or deferring. */
   followUp(content: string | InteractionCallbackData): Promise<void>;
+  /** Send a regular message to the channel where the interaction was invoked. */
+  sendMessage(options: SendMessageOptions | string): Promise<Message>;
 }
 
 // ─── Client ─────────────────────────────────────────────────
@@ -373,6 +375,13 @@ export class Client extends EventEmitter {
     return this.rest.getMember(tavernId, userId);
   }
 
+  /**
+   * Send a typing indicator to a channel.
+   */
+  startTyping(tavernId: string, channelId: string): void {
+    this.gateway.send('tavern_typing_start', { tavernId, channelId });
+  }
+
   // ─── Gateway Event Wiring ─────────────────────────────
 
   private setupGatewayListeners(): void {
@@ -556,11 +565,11 @@ export class Client extends EventEmitter {
     const message = raw as ActionableMessage;
     message.tavernId = tavernId;
 
-    message.reply = async (content: string): Promise<Message> => {
-      return this.rest.sendMessage(tavernId, raw.channelId, {
-        content,
-        replyToId: raw.id,
-      });
+    message.reply = async (content: string | SendMessageOptions): Promise<Message> => {
+      const opts: SendMessageOptions = typeof content === 'string'
+        ? { content, replyToId: raw.id }
+        : { ...content, replyToId: raw.id };
+      return this.rest.sendMessage(tavernId, raw.channelId, opts);
     };
 
     message.edit = async (content: string): Promise<Message> => {
@@ -604,6 +613,11 @@ export class Client extends EventEmitter {
     interaction.followUp = async (content: string | InteractionCallbackData): Promise<void> => {
       const data: InteractionCallbackData = typeof content === 'string' ? { content } : content;
       return this.rest.followUpInteraction(raw.id, data);
+    };
+
+    interaction.sendMessage = async (options: SendMessageOptions | string): Promise<Message> => {
+      const opts: SendMessageOptions = typeof options === 'string' ? { content: options } : options;
+      return this.rest.sendMessage(raw.tavernId, raw.channelId, opts);
     };
 
     return interaction;

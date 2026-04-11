@@ -6,6 +6,7 @@
  */
 
 import { ChannelType, MessageStatus, BotStatus, MemberStatus, CommandOptionType } from './constants';
+import type { Embed } from './embed';
 
 // ─── Users ──────────────────────────────────────────────────
 
@@ -176,6 +177,7 @@ export interface MessageSender {
   aetherName?: string | null;
   nickname?: string | null;
   roles?: MemberRole[];
+  isBot?: boolean;
 }
 
 // ─── Message Payloads ───────────────────────────────────────
@@ -184,6 +186,7 @@ export interface SendMessageOptions {
   content: string;
   replyToId?: string;
   metadata?: Record<string, unknown>;
+  embeds?: Embed[];
 }
 
 export interface EditMessageOptions {
@@ -409,6 +412,7 @@ export interface Interaction {
 export interface InteractionCallbackData {
   content: string;
   ephemeral?: boolean;
+  embeds?: Embed[];
 }
 
 // ─── Paginated response ─────────────────────────────────────

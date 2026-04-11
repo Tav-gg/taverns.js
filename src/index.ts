@@ -34,3 +34,5 @@ export type { GatewayOptions } from './gateway';
 export * from './types';
 export * from './constants';
 export { verifyWebhookSignature } from './webhook';
+export { EmbedBuilder } from './embed';
+export type { Embed, EmbedField, EmbedFooter, EmbedImage } from './embed';
