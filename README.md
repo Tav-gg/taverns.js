@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.jpg" alt="taverns.js" width="100%" />
+</p>
+
 # taverns.js
 
 SDK for building Tavern bots for the [Taverns](https://tav.gg) platform.
