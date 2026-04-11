@@ -192,6 +192,13 @@ Messages received via `messageCreate` have these helper methods:
 | `message.unpin()` | Unpin the message |
 | `message.react(emoji)` | Add a reaction |
 
+## Links
+
+- [npm package](https://www.npmjs.com/package/taverns.js)
+- [API Documentation](https://tav.gg/developers/docs)
+- [Developer Portal](https://tav.gg/developers/home)
+- [taverns.py](https://github.com/Tav-gg/taverns.py) (Python SDK)
+
 ## License
 
 Apache-2.0 - see [LICENSE](LICENSE) for details.
