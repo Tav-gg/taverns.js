@@ -284,7 +284,8 @@ export class RESTClient extends EventEmitter {
 
   /** Register or overwrite all slash commands for this bot. */
   async registerCommands(commands: Omit<BotCommand, 'id' | 'version'>[]): Promise<BotCommand[]> {
-    return this.put<BotCommand[]>('/bots/@me/commands', commands);
+    const result = await this.put<BotCommand[]>('/bots/@me/commands', commands);
+    return result ?? [];
   }
 
   /** Get all registered commands for this bot. */
@@ -359,7 +360,7 @@ export class RESTClient extends EventEmitter {
         'Authorization': `Bot ${this.token}`,
         'Content-Type': 'application/json',
         'Accept': 'application/json',
-        'User-Agent': 'taverns.js/0.1.0',
+        'User-Agent': 'taverns.js/0.2.0',
       },
     };
 

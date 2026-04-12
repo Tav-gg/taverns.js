@@ -410,7 +410,7 @@ export interface Interaction {
 }
 
 export interface InteractionCallbackData {
-  content: string;
+  content?: string;
   ephemeral?: boolean;
   embeds?: Embed[];
 }
