@@ -375,6 +375,50 @@ export class Client extends EventEmitter {
     return this.rest.getMember(tavernId, userId);
   }
 
+  // ─── Member Moderation ────────────────────────────────
+  // Require the matching granted permission (KICK_MEMBERS / BAN_MEMBERS /
+  // MUTE_MEMBERS). The tavern owner is immune to all three — the API rejects
+  // any attempt to kick, ban, or mute the owner.
+
+  /** Kick a member from a tavern (requires KICK_MEMBERS). */
+  async kickMember(tavernId: string, userId: string, reason?: string): Promise<void> {
+    return this.rest.kickMember(tavernId, userId, reason);
+  }
+
+  /** Ban a member from a tavern (requires BAN_MEMBERS). */
+  async banMember(
+    tavernId: string,
+    userId: string,
+    options?: { reason?: string; deleteMessageSeconds?: number; auto?: boolean },
+  ): Promise<void> {
+    return this.rest.banMember(tavernId, userId, options);
+  }
+
+  /** Unban a member from a tavern (requires BAN_MEMBERS). */
+  async unbanMember(tavernId: string, userId: string): Promise<void> {
+    return this.rest.unbanMember(tavernId, userId);
+  }
+
+  /** Mute/timeout a member (requires MUTE_MEMBERS). */
+  async muteMember(
+    tavernId: string,
+    userId: string,
+    options?: {
+      reason?: string;
+      durationMinutes?: number;
+      type?: 'TIMEOUT' | 'VOICE';
+      scope?: 'SERVER' | 'VOICE' | 'HALLS';
+      channelIds?: string[];
+    },
+  ): Promise<void> {
+    return this.rest.muteMember(tavernId, userId, options);
+  }
+
+  /** Remove an active mute from a member (requires MUTE_MEMBERS). */
+  async unmuteMember(tavernId: string, userId: string): Promise<void> {
+    return this.rest.unmuteMember(tavernId, userId);
+  }
+
   /**
    * Send a typing indicator to a channel.
    */

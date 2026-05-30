@@ -212,19 +212,52 @@ export class RESTClient extends EventEmitter {
     return this.get<Member>(`/taverns/${tavernId}/members/${userId}`);
   }
 
-  /** Kick a member from a tavern. */
+  /**
+   * Kick a member from a tavern. Requires the bot to have KICK_MEMBERS.
+   * The tavern owner can never be kicked.
+   */
   async kickMember(tavernId: string, userId: string, reason?: string): Promise<void> {
     await this.delete(`/taverns/${tavernId}/members/${userId}`, reason ? { reason } : undefined);
   }
 
-  /** Ban a member from a tavern. */
-  async banMember(tavernId: string, userId: string, reason?: string): Promise<void> {
-    await this.post(`/taverns/${tavernId}/bans/${userId}`, reason ? { reason } : undefined);
+  /**
+   * Ban a member from a tavern. Requires the bot to have BAN_MEMBERS.
+   * The tavern owner can never be banned.
+   */
+  async banMember(
+    tavernId: string,
+    userId: string,
+    options?: { reason?: string; deleteMessageSeconds?: number; auto?: boolean },
+  ): Promise<void> {
+    await this.post(`/taverns/${tavernId}/bans`, { userId, ...options });
   }
 
   /** Unban a member from a tavern. */
   async unbanMember(tavernId: string, userId: string): Promise<void> {
     await this.delete(`/taverns/${tavernId}/bans/${userId}`);
+  }
+
+  /**
+   * Mute (timeout) a member. Requires the bot to have MUTE_MEMBERS.
+   * `durationMinutes` omitted = permanent. The tavern owner can never be muted.
+   */
+  async muteMember(
+    tavernId: string,
+    userId: string,
+    options?: {
+      reason?: string;
+      durationMinutes?: number;
+      type?: 'TIMEOUT' | 'VOICE';
+      scope?: 'SERVER' | 'VOICE' | 'HALLS';
+      channelIds?: string[];
+    },
+  ): Promise<void> {
+    await this.post(`/taverns/${tavernId}/mutes`, { userId, ...options });
+  }
+
+  /** Remove an active mute from a member. */
+  async unmuteMember(tavernId: string, userId: string): Promise<void> {
+    await this.delete(`/taverns/${tavernId}/mutes/${userId}`);
   }
 
   // ─── Roles ─────────────────────────────────────────────
@@ -360,7 +393,7 @@ export class RESTClient extends EventEmitter {
         'Authorization': `Bot ${this.token}`,
         'Content-Type': 'application/json',
         'Accept': 'application/json',
-        'User-Agent': 'taverns.js/0.2.0',
+        'User-Agent': 'taverns.js/0.2.2',
       },
     };
 

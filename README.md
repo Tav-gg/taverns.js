@@ -182,6 +182,13 @@ const client = new Client({ token: process.env.TAVERN_BOT_TOKEN });
 | `deleteChannel(tavernId, channelId)` | Delete a channel |
 | `getMembers(tavernId, options?)` | List tavern members |
 | `getMember(tavernId, userId)` | Get a specific member |
+| `kickMember(tavernId, userId, reason?)` | Kick a member (requires `KICK_MEMBERS`) |
+| `banMember(tavernId, userId, options?)` | Ban a member (requires `BAN_MEMBERS`) |
+| `unbanMember(tavernId, userId)` | Lift a ban (requires `BAN_MEMBERS`) |
+| `muteMember(tavernId, userId, options?)` | Mute/timeout a member (requires `MUTE_MEMBERS`) |
+| `unmuteMember(tavernId, userId)` | Remove a mute (requires `MUTE_MEMBERS`) |
+
+> **Owner immunity:** the tavern owner can never be kicked, banned, or muted — by anyone, including bots with `ADMINISTRATOR`. The API rejects any such attempt.
 
 ### ActionableMessage Methods
 
