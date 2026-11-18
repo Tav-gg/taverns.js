@@ -1,12 +1,13 @@
 {
   "name": "taverns.js",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "SDK for building Tavern bots for the Taverns platform",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
+    "test": "tsc && node --test test/voice.test.js test/security.test.js test/retry.test.js test/dm.test.js",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -14,7 +15,9 @@
     "bot",
     "sdk",
     "api",
-    "tav"
+    "tav",
+    "voice",
+    "audio"
   ],
   "license": "Apache-2.0",
   "author": "Tav <https://github.com/Tav-gg>",
@@ -35,7 +38,19 @@
     "README.md"
   ],
   "dependencies": {
-    "ws": "^8.0.0"
+    "ws": "^8.21.0"
+  },
+  "peerDependencies": {
+    "@livekit/rtc-node": ">=1.1.0 <2",
+    "ffmpeg-static": ">=5"
+  },
+  "peerDependenciesMeta": {
+    "@livekit/rtc-node": {
+      "optional": true
+    },
+    "ffmpeg-static": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/ws": "^8.0.0",

@@ -9,6 +9,10 @@
 import { EventEmitter } from 'events';
 import WebSocket from 'ws';
 import { DEFAULT_WS_URL, GatewayAction } from './constants';
+import { checkBaseUrl } from './url';
+
+/** Close codes the gateway uses when it does not accept the bot token. */
+const AUTH_CLOSE_CODES = new Set([4001, 4003, 4004]);
 
 export interface GatewayOptions {
   /** Bot token (tavbot_...) */
@@ -23,6 +27,11 @@ export interface GatewayOptions {
   maxReconnectAttempts?: number;
   /** Gateway intents bitfield (session-level filtering, not persisted) */
   intents?: bigint;
+  /**
+   * Accept a plain ws:// URL. The bot token is then sent unencrypted, so use
+   * this for local development only. Default: false.
+   */
+  allowInsecure?: boolean;
 }
 
 enum ConnectionState {
@@ -39,6 +48,8 @@ export class Gateway extends EventEmitter {
   private state: ConnectionState = ConnectionState.DISCONNECTED;
   private reconnectAttempts = 0;
   private destroyed = false;
+  /** Set when the gateway refused the token; cleared by setToken(). */
+  private authError: Error | null = null;
 
   private token: string;
   private readonly url: string;
@@ -51,6 +62,7 @@ export class Gateway extends EventEmitter {
     super();
     this.token = options.token;
     this.url = options.url || DEFAULT_WS_URL;
+    checkBaseUrl(this.url, 'gateway', options.allowInsecure ?? false);
     this.heartbeatInterval = options.heartbeatInterval || 30_000;
     this.autoReconnect = options.autoReconnect ?? true;
     this.maxReconnectAttempts = options.maxReconnectAttempts ?? Infinity;
@@ -65,15 +77,24 @@ export class Gateway extends EventEmitter {
   /** Update the bot token (used when login() provides a new token). */
   setToken(token: string): void {
     this.token = token;
+    this.authError = null;
   }
 
   /**
    * Connect to the gateway.
    * Resolves once the WebSocket connection is open.
+   *
+   * If the gateway refuses the token (HTTP 401/403, or close code 4001, 4003 or
+   * 4004), the gateway stops reconnecting and emits `authFailed`; call
+   * setToken() with a valid token before connecting again.
    */
   connect(): Promise<void> {
     if (this.destroyed) {
       return Promise.reject(new Error('Gateway has been destroyed'));
+    }
+
+    if (this.authError) {
+      return Promise.reject(this.authError);
     }
 
     if (this.state === ConnectionState.CONNECTED || this.state === ConnectionState.CONNECTING) {
@@ -84,7 +105,8 @@ export class Gateway extends EventEmitter {
     this.emit('debug', `Connecting to gateway: ${this.url}`);
 
     return new Promise((resolve, reject) => {
-      let wsUrl = `${this.url}?token=${encodeURIComponent(this.token)}`;
+      // The token is never written to debug output: only the base URL above is.
+      let wsUrl = `${this.url}${this.url.includes('?') ? '&' : '?'}token=${encodeURIComponent(this.token)}`;
       if (this.intents !== undefined) {
         wsUrl += `&intents=${this.intents.toString()}`;
       }
@@ -109,9 +131,16 @@ export class Gateway extends EventEmitter {
       const onError = (err: Error): void => {
         this.emit('debug', `Gateway connection error: ${err.message}`);
         if (this.state === ConnectionState.CONNECTING) {
+          // The handshake answer, e.g. "Unexpected server response: 401"
+          const status = /Unexpected server response: (\d{3})/.exec(err.message)?.[1];
+          if (status === '401' || status === '403') {
+            this.authError = new Error(
+              `Authentication failed: the gateway refused the bot token (HTTP ${status}). Not reconnecting.`,
+            );
+          }
           cleanup();
           this.state = ConnectionState.DISCONNECTED;
-          reject(err);
+          reject(this.authError ?? err);
         }
       };
 
@@ -119,9 +148,12 @@ export class Gateway extends EventEmitter {
         const reasonStr = reason.toString('utf-8');
         this.emit('debug', `Gateway closed during connect: ${code} ${reasonStr}`);
         if (this.state === ConnectionState.CONNECTING) {
+          if (AUTH_CLOSE_CODES.has(code)) {
+            this.authError = this.authCloseError(code, reasonStr);
+          }
           cleanup();
           this.state = ConnectionState.DISCONNECTED;
-          reject(new Error(`WebSocket closed: ${code} ${reasonStr}`));
+          reject(this.authError ?? new Error(`WebSocket closed: ${code} ${reasonStr}`));
         }
       };
 
@@ -220,9 +252,16 @@ export class Gateway extends EventEmitter {
     this.state = ConnectionState.DISCONNECTED;
     this.emit('close', code, reasonStr);
 
-    // Auth failures should not trigger reconnect
-    if (code === 4001 || code === 4003 || code === 4004) {
+    // Auth failures must not trigger a reconnect: the same token would be refused again
+    if (AUTH_CLOSE_CODES.has(code)) {
+      this.authError = this.authCloseError(code, reasonStr);
       this.emit('debug', `Authentication error (${code}), not reconnecting`);
+      this.emit('authFailed', this.authError);
+      return;
+    }
+
+    // The handshake was refused (reported by connect()); do not retry it
+    if (this.authError) {
       return;
     }
 
@@ -287,6 +326,11 @@ export class Gateway extends EventEmitter {
         this.emit('reconnected');
       } catch (err) {
         this.emit('debug', `Reconnect attempt ${this.reconnectAttempts} failed: ${(err as Error).message}`);
+        if (this.authError) {
+          this.state = ConnectionState.DISCONNECTED;
+          this.emit('authFailed', this.authError);
+          return;
+        }
         if (!this.destroyed && this.autoReconnect) {
           this.scheduleReconnect();
         }
@@ -296,6 +340,12 @@ export class Gateway extends EventEmitter {
     if (this.reconnectTimer.unref) {
       this.reconnectTimer.unref();
     }
+  }
+
+  private authCloseError(code: number, reason: string): Error {
+    return new Error(
+      `Authentication failed: the gateway closed the connection (${code}${reason ? ` ${reason}` : ''}). Not reconnecting.`,
+    );
   }
 
   private cleanup(): void {

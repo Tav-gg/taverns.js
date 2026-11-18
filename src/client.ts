@@ -29,12 +29,14 @@ import { EventEmitter } from 'events';
 import { Collection } from './collection';
 import { RESTClient, TavernAPIError } from './rest';
 import { Gateway } from './gateway';
+import { VoiceManager } from './voice';
 import {
   BOT_TOKEN_PREFIX,
   FRIENDLY_EVENT_MAP,
   GatewayEvent,
   DEFAULT_API_URL,
   DEFAULT_WS_URL,
+  DMErrorCode,
 } from './constants';
 import type {
   ClientOptions,
@@ -53,7 +55,16 @@ import type {
   UpdateChannelOptions,
   Interaction,
   InteractionCallbackData,
+  DmChannel,
+  DmMessage,
+  DmMessagePage,
+  SendDMOptions,
+  EditDMOptions,
+  GetDMMessagesOptions,
 } from './types';
+
+/** How many person-to-DM-channel IDs the client remembers for sendDM(). */
+const DM_CHANNEL_CACHE_SIZE = 10_000;
 
 // ─── Extended Message with helper methods ────────────────
 
@@ -73,6 +84,14 @@ export interface ActionableMessage extends Message {
   unpin(): Promise<void>;
   /** Add a reaction to this message. */
   react(emoji: string): Promise<void>;
+}
+
+// ─── Extended direct message with helper methods ─────────
+
+/** A direct message from a person, enriched with convenience methods. */
+export interface ActionableDmMessage extends DmMessage {
+  /** Reply to this message in the same direct message. */
+  reply(content: string | SendDMOptions): Promise<DmMessage>;
 }
 
 // ─── Extended Interaction with helper methods ──────────────
@@ -98,6 +117,9 @@ export class Client extends EventEmitter {
   /** The WebSocket gateway connection. */
   readonly gateway: Gateway;
 
+  /** Voice halls: `client.voice.join(channelId)` (needs `@livekit/rtc-node`). */
+  readonly voice: VoiceManager;
+
   /** The bot's own user identity. Set after login(). */
   private _user: User | null = null;
 
@@ -113,6 +135,12 @@ export class Client extends EventEmitter {
   /** Cached members per tavern: Map<tavernId, Collection<userId, Member>> */
   private memberCache = new Map<string, Collection<string, Member>>();
 
+  /** The bot's direct message channel with each person: Map<userId, channelId>. */
+  private dmChannels = new Map<string, string>();
+
+  /** createDM() calls in flight, so two sends to one person open one DM. */
+  private dmOpens = new Map<string, Promise<DmChannel>>();
+
   private token: string | null;
   private options: ClientOptions;
   private ready = false;
@@ -126,6 +154,7 @@ export class Client extends EventEmitter {
     this.rest = new RESTClient(
       this.token || '',
       options.apiUrl || DEFAULT_API_URL,
+      { allowInsecure: options.allowInsecure },
     );
 
     // Initialize Gateway
@@ -136,7 +165,18 @@ export class Client extends EventEmitter {
       autoReconnect: options.autoReconnect ?? true,
       maxReconnectAttempts: options.maxReconnectAttempts,
       intents: options.intents,
+      allowInsecure: options.allowInsecure,
     });
+
+    // Voice halls
+    this.voice = new VoiceManager(
+      {
+        rest: this.rest,
+        tavernIdForChannel: (channelId) => this.findTavernForChannel(channelId) || undefined,
+        debug: (message) => this.emit('debug', message),
+      },
+      options.voice,
+    );
 
     // Wire up gateway events
     this.setupGatewayListeners();
@@ -249,10 +289,14 @@ export class Client extends EventEmitter {
    */
   destroy(): void {
     this.ready = false;
+    // Leave every voice hall (best effort; the connections close at once).
+    this.voice.destroy().catch(() => undefined);
     this.gateway.destroy();
     this.taverns.clear();
     this.channels.clear();
     this.memberCache.clear();
+    this.dmChannels.clear();
+    this.dmOpens.clear();
     this._user = null;
     this._application = null;
     this.emit('debug', 'Client destroyed');
@@ -426,6 +470,97 @@ export class Client extends EventEmitter {
     this.gateway.send('tavern_typing_start', { tavernId, channelId });
   }
 
+  // ─── Direct Messages ──────────────────────────────────
+  // The bot may message a person who is in a tavern where the bot is installed
+  // and turned on, and who allows it (or wrote to the bot in the last 24 hours).
+  // Anything else rejects with TavernAPIError, code 'CANNOT_DM_USER'. Hitting a
+  // DM limit rejects with RateLimitError ({ scope, retryAfter }); the SDK does
+  // not resend those for you.
+
+  /**
+   * Open the bot's direct message with a person (or get the existing one).
+   * The channel ID is remembered, so sendDM() to the same person does not open
+   * it again.
+   */
+  async createDM(userId: string): Promise<DmChannel> {
+    const pending = this.dmOpens.get(userId);
+    if (pending) return pending;
+    const open = this.rest.createDM(userId).then((channel) => {
+      this.rememberDMChannel(userId, channel.id);
+      return channel;
+    });
+    this.dmOpens.set(userId, open);
+    try {
+      return await open;
+    } finally {
+      this.dmOpens.delete(userId);
+    }
+  }
+
+  /**
+   * Send a direct message to a person. Opens the DM the first time, then
+   * reuses the channel.
+   *
+   * @example
+   * ```ts
+   * await client.sendDM(userId, 'Your order is ready!');
+   * await client.sendDM(userId, { content: 'Your stats:', embeds: [embed] });
+   * ```
+   */
+  async sendDM(userId: string, content: string | SendDMOptions): Promise<DmMessage> {
+    const options: SendDMOptions = typeof content === 'string' ? { content } : content;
+    const known = this.dmChannels.get(userId);
+    if (known) {
+      try {
+        return await this.rest.sendDMMessage(known, options);
+      } catch (err) {
+        // The remembered channel is gone: open the DM again, once.
+        if (!(err instanceof TavernAPIError) || err.code !== DMErrorCode.DM_CHANNEL_NOT_FOUND) throw err;
+        this.dmChannels.delete(userId);
+      }
+    }
+    const channel = await this.createDM(userId);
+    return this.rest.sendDMMessage(channel.id, options);
+  }
+
+  /** Send a message in a direct message the bot already has open. */
+  async sendDMMessage(channelId: string, content: string | SendDMOptions): Promise<DmMessage> {
+    const options: SendDMOptions = typeof content === 'string' ? { content } : content;
+    return this.rest.sendDMMessage(channelId, options);
+  }
+
+  /** Get one of the bot's direct messages. */
+  async getDMChannel(channelId: string): Promise<DmChannel> {
+    const channel = await this.rest.getDMChannel(channelId);
+    if (channel?.recipient?.id) this.rememberDMChannel(channel.recipient.id, channel.id);
+    return channel;
+  }
+
+  /** Get messages from a direct message, oldest first. */
+  async getDMMessages(channelId: string, options?: GetDMMessagesOptions): Promise<DmMessagePage> {
+    return this.rest.getDMMessages(channelId, options);
+  }
+
+  /** Edit one of the bot's own messages in a direct message. */
+  async editDMMessage(channelId: string, messageId: string, content: string | EditDMOptions): Promise<DmMessage> {
+    const options: EditDMOptions = typeof content === 'string' ? { content } : content;
+    return this.rest.editDMMessage(channelId, messageId, options);
+  }
+
+  /** Delete one of the bot's own messages in a direct message. */
+  async deleteDMMessage(channelId: string, messageId: string): Promise<void> {
+    return this.rest.deleteDMMessage(channelId, messageId);
+  }
+
+  private rememberDMChannel(userId: string, channelId: string): void {
+    this.dmChannels.delete(userId); // re-insert as the newest entry
+    this.dmChannels.set(userId, channelId);
+    if (this.dmChannels.size > DM_CHANNEL_CACHE_SIZE) {
+      const oldest = this.dmChannels.keys().next().value;
+      if (oldest !== undefined) this.dmChannels.delete(oldest);
+    }
+  }
+
   // ─── Gateway Event Wiring ─────────────────────────────
 
   private setupGatewayListeners(): void {
@@ -457,6 +592,13 @@ export class Client extends EventEmitter {
       this.emit('error', new Error('Failed to reconnect to gateway after maximum attempts'));
     });
 
+    // The token was refused (revoked, regenerated or the bot was disabled): the
+    // gateway has stopped reconnecting.
+    this.gateway.on('authFailed', (err: Error) => {
+      this.ready = false;
+      this.emit('error', err);
+    });
+
     // Handle incoming gateway events
     this.gateway.on('event', (eventName: string, data: unknown) => {
       this.handleGatewayEvent(eventName, data);
@@ -466,6 +608,9 @@ export class Client extends EventEmitter {
   private handleGatewayEvent(eventName: string, data: unknown): void {
     // Always emit the raw event
     this.emit('raw', eventName, data);
+
+    // The bot's own voice connections
+    this.voice.handleGatewayEvent(eventName, data);
 
     // Update caches based on events
     this.updateCaches(eventName, data);
@@ -480,6 +625,8 @@ export class Client extends EventEmitter {
       } else if (friendlyName === 'interactionCreate') {
         const interaction = this.enrichInteraction(data as Interaction);
         this.emit(friendlyName, interaction);
+      } else if (friendlyName === 'dmMessageCreate') {
+        this.emit(friendlyName, this.enrichDmMessage(data as DmMessage));
       } else {
         this.emit(friendlyName, data);
       }
@@ -634,6 +781,26 @@ export class Client extends EventEmitter {
 
     message.react = async (emoji: string): Promise<void> => {
       return this.rest.addReaction(tavernId, raw.id, emoji);
+    };
+
+    return message;
+  }
+
+  /**
+   * Enrich a direct message from a person with .reply(), and remember the
+   * person's DM channel for sendDM().
+   */
+  private enrichDmMessage(raw: DmMessage): ActionableDmMessage {
+    const message = raw as ActionableDmMessage;
+    if (raw?.sender?.id && raw.channelId && !raw.sender.isBot) {
+      this.rememberDMChannel(raw.sender.id, raw.channelId);
+    }
+
+    message.reply = async (content: string | SendDMOptions): Promise<DmMessage> => {
+      const opts: SendDMOptions = typeof content === 'string'
+        ? { content, replyToId: raw.id }
+        : { ...content, replyToId: raw.id };
+      return this.rest.sendDMMessage(raw.channelId, opts);
     };
 
     return message;

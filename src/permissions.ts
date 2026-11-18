@@ -7,7 +7,7 @@
  */
 
 /**
- * All Tavern permission flags. Each flag is a bit position (0-35).
+ * All Tavern permission flags. Each flag is a bit position.
  * The actual bitfield value is `1n << BigInt(position)`.
  */
 export const PermissionFlags = {
@@ -66,6 +66,14 @@ export const PermissionFlags = {
 
   // Bots
   MANAGE_BOTS: 35n,
+
+  /**
+   * Listen in voice halls: a bot in a voice hall may hear it. A bot must
+   * request it and the tavern must grant it explicitly (ADMINISTRATOR does
+   * not include it); members see a "listening" marker on the bot while it is
+   * in the hall.
+   */
+  LISTEN_VOICE: 45n,
 } as const;
 
 export type PermissionFlagName = keyof typeof PermissionFlags;
@@ -125,9 +133,11 @@ export class PermissionsBitField {
    */
   has(permission: PermissionFlagName | bigint): boolean {
     const flag = this.resolve(permission);
-    // ADMINISTRATOR grants everything
+    // ADMINISTRATOR grants everything except Listen in voice halls, which a
+    // tavern always grants explicitly
     if ((this.bitfield & (1n << PermissionFlags.ADMINISTRATOR)) !== 0n) {
-      return true;
+      const listen = 1n << PermissionFlags.LISTEN_VOICE;
+      return (flag & listen) === 0n || (this.bitfield & listen) !== 0n;
     }
     return (this.bitfield & flag) === flag;
   }

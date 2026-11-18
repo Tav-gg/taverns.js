@@ -71,10 +71,15 @@ export const GatewayIntents = {
   TAVERN_REACTIONS:  1n << 13n,
   TAVERN_PINS:       1n << 14n,
   INTERACTIONS:      1n << 15n,
+  /**
+   * Messages people send, edit and delete in their direct messages with the
+   * bot. Not privileged: message content in these DMs is always included.
+   */
+  DIRECT_MESSAGES:   1n << 16n,
   /** All non-privileged intents */
-  DEFAULT: 0x7FF9n,
+  DEFAULT: 0x17FF9n,
   /** All intents including privileged */
-  ALL: 0xFFFFn,
+  ALL: 0x1FFFFn,
 } as const;
 
 // ─── Command Option Types ───────────────────────────────────
@@ -161,8 +166,17 @@ export enum GatewayEvent {
   BOT_INSTALLED = 'bot_installed',
   BOT_REMOVED = 'bot_removed',
 
+  // Bot voice (sent to the bot about its own voice connection)
+  BOT_VOICE_DISCONNECTED = 'bot_voice_disconnected',
+  BOT_VOICE_UPDATED = 'bot_voice_updated',
+
   // Interactions (slash commands)
   INTERACTION_CREATE = 'interaction_create',
+
+  // Direct messages (what people send in their DMs with the bot)
+  DM_MESSAGE_CREATE = 'dm_message_create',
+  DM_MESSAGE_UPDATE = 'dm_message_update',
+  DM_MESSAGE_DELETE = 'dm_message_delete',
 }
 
 // ─── WebSocket Actions ──────────────────────────────────────
@@ -210,5 +224,41 @@ export const FRIENDLY_EVENT_MAP: Record<string, string> = {
   [GatewayEvent.TYPING_STOP]: 'typingStop',
   [GatewayEvent.BOT_INSTALLED]: 'botInstalled',
   [GatewayEvent.BOT_REMOVED]: 'botRemoved',
+  [GatewayEvent.BOT_VOICE_DISCONNECTED]: 'botVoiceDisconnected',
+  [GatewayEvent.BOT_VOICE_UPDATED]: 'botVoiceUpdated',
   [GatewayEvent.INTERACTION_CREATE]: 'interactionCreate',
+  [GatewayEvent.DM_MESSAGE_CREATE]: 'dmMessageCreate',
+  [GatewayEvent.DM_MESSAGE_UPDATE]: 'dmMessageUpdate',
+  [GatewayEvent.DM_MESSAGE_DELETE]: 'dmMessageDelete',
 };
+
+// ─── Direct Message Errors ──────────────────────────────────
+// The `code` of a failed direct message request (see TavernAPIError.code).
+
+export const DMErrorCode = {
+  /** The bot may not message this person (one answer for every reason). */
+  CANNOT_DM_USER: 'CANNOT_DM_USER',
+  /** Direct messages are turned off for this app. */
+  BOT_DM_DISABLED: 'BOT_DM_DISABLED',
+  /** Opening new DMs needs the app to pass review (public apps in more than 100 taverns). */
+  BOT_DM_REVIEW_REQUIRED: 'BOT_DM_REVIEW_REQUIRED',
+  /** The channel is not one of this bot's direct messages. */
+  DM_CHANNEL_NOT_FOUND: 'DM_CHANNEL_NOT_FOUND',
+  /** The message does not exist in this direct message. */
+  DM_MESSAGE_NOT_FOUND: 'DM_MESSAGE_NOT_FOUND',
+  /** The bot can edit and delete only its own messages. */
+  NOT_YOUR_MESSAGE: 'NOT_YOUR_MESSAGE',
+  /** A direct message limit was hit; see RateLimitError.scope and retryAfter. */
+  BOT_DM_RATE_LIMITED: 'BOT_DM_RATE_LIMITED',
+} as const;
+
+export type DMErrorCode = (typeof DMErrorCode)[keyof typeof DMErrorCode];
+
+/** Which direct message limit a 429 answer refers to (RateLimitError.scope). */
+export type DMRateLimitScope =
+  | 'user_burst'
+  | 'user_hourly'
+  | 'unanswered'
+  | 'global'
+  | 'open_burst'
+  | 'open_daily';

@@ -7,6 +7,8 @@
 
 import { ChannelType, MessageStatus, BotStatus, MemberStatus, CommandOptionType } from './constants';
 import type { Embed } from './embed';
+import type { VoiceOptions } from './voice';
+import type { ActionableDmMessage } from './client';
 
 // ─── Users ──────────────────────────────────────────────────
 
@@ -205,6 +207,97 @@ export interface SearchMessagesOptions {
   senderId?: string;
   limit?: number;
   offset?: number;
+}
+
+// ─── Direct Messages ────────────────────────────────────────
+
+/** A 1:1 direct message between the bot and one person. */
+export interface DmChannel {
+  id: string;
+  type: 'dm';
+  /** The person on the other side. */
+  recipient: DmRecipient;
+  createdAt: string;
+  lastMessageAt: string | null;
+}
+
+export interface DmRecipient {
+  id: string;
+  displayName: string;
+  avatarUrl: string | null;
+}
+
+/** A file in a direct message. */
+export interface DmAttachment {
+  url: string;
+  fileName: string;
+  fileSize: number;
+  mimeType: string;
+}
+
+/** A message in a direct message (also the data of the dm_message_create and dm_message_update events). */
+export interface DmMessage {
+  id: string;
+  channelId: string;
+  content: string;
+  filteredContent: string | null;
+  status: 'SENT' | 'FILTERED';
+  replyToId: string | null;
+  replyTo: MessageReply | null;
+  embeds: Embed[];
+  attachments: DmAttachment[];
+  /** Present when the person sent a GIF. */
+  gif?: { url: string; width?: number; height?: number };
+  /** Present when the person sent a sticker. */
+  sticker?: { id: string; name: string; imageUrl: string };
+  createdAt: string;
+  editedAt: string | null;
+  sender: DmMessageSender;
+}
+
+export interface DmMessageSender {
+  id: string;
+  displayName: string;
+  avatarUrl: string | null;
+  isBot: boolean;
+}
+
+/** The data of the dm_message_delete event. */
+export interface DmMessageDelete {
+  id: string;
+  channelId: string;
+}
+
+/** One page of a direct message's history, oldest first. */
+export interface DmMessagePage {
+  messages: DmMessage[];
+  hasMore: boolean;
+}
+
+/** A message to send in a direct message. It needs content, an embed or a file. */
+export interface SendDMOptions {
+  /** Up to 2000 characters. */
+  content?: string;
+  /** Up to 5 embeds. */
+  embeds?: Embed[];
+  /** The ID of a message in the same DM to reply to. */
+  replyToId?: string;
+  /** Your own ID for this send (up to 64 characters). */
+  nonce?: string;
+  /** Up to 10 files already uploaded for this DM. */
+  attachments?: DmAttachment[];
+}
+
+export interface EditDMOptions {
+  content?: string;
+  embeds?: Embed[];
+}
+
+export interface GetDMMessagesOptions {
+  /** Only messages older than this message ID. */
+  before?: string;
+  /** 1 to 100 (default 50). */
+  limit?: number;
 }
 
 // ─── Channel Payloads ───────────────────────────────────────
@@ -432,6 +525,11 @@ export interface ClientOptions {
   apiUrl?: string;
   /** Override the WebSocket gateway URL */
   wsUrl?: string;
+  /**
+   * Accept plain http:// and ws:// URLs for apiUrl and wsUrl. The bot token is
+   * then sent unencrypted, so use this for local development only. Default: false.
+   */
+  allowInsecure?: boolean;
   /** Whether to automatically reconnect on disconnect (default: true) */
   autoReconnect?: boolean;
   /** Maximum number of reconnect attempts before giving up (default: Infinity) */
@@ -440,6 +538,8 @@ export interface ClientOptions {
   heartbeatInterval?: number;
   /** Gateway intents bitfield (session-level, not persisted to server) */
   intents?: bigint;
+  /** Voice options (see `client.voice`). */
+  voice?: VoiceOptions;
 }
 
 // ─── Client Event Map ───────────────────────────────────────
@@ -482,6 +582,16 @@ export interface ClientEvents {
   typingStop: [event: TypingEvent];
   botInstalled: [event: BotInstalledEvent];
   botRemoved: [event: BotRemovedEvent];
+  /** The bot's voice connection in a hall ended (also emitted on the connection as `disconnected`). */
+  botVoiceDisconnected: [event: { tavernId: string; channelId: string; reason: string }];
+  /** The tavern granted or took away Listen in voice halls, or Speak, while the bot is in a hall. */
+  botVoiceUpdated: [event: { tavernId: string; channelId: string; listening: boolean; canSpeak: boolean }];
   interactionCreate: [interaction: Interaction];
+  /** A person sent the bot a direct message (needs the DIRECT_MESSAGES intent). */
+  dmMessageCreate: [message: ActionableDmMessage];
+  /** A person edited a message in a direct message with the bot. */
+  dmMessageUpdate: [message: DmMessage];
+  /** A person deleted a message in a direct message with the bot. */
+  dmMessageDelete: [event: DmMessageDelete];
   raw: [event: string, data: unknown];
 }
