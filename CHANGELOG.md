@@ -4,7 +4,7 @@ All notable changes to taverns.js are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/) (while the version is 0.x, a minor release can break things).
 
-## [0.3.0] - Unreleased
+## [0.3.0] - 2026-11-18
 
 This release also contains the member moderation helpers from 0.2.2, which was tagged but never
 published to npm.
@@ -97,5 +97,5 @@ published to npm.
 
 Earlier versions are described in the git history.
 
-[0.3.0]: https://github.com/Tav-gg/taverns.js/compare/v0.2.1...HEAD
+[0.3.0]: https://github.com/Tav-gg/taverns.js/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/Tav-gg/taverns.js/tree/v0.2.1
