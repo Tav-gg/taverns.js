@@ -1,5 +1,9 @@
 name: Publish to npm
 
+# Publishes with npm trusted publishing (OIDC): no npm token is stored anywhere.
+# The package's Trusted Publisher on npmjs.com must name this repository and
+# this workflow file (publish.yml).
+
 on:
   release:
     types: [published]
@@ -15,11 +19,16 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
+
+      # Trusted publishing needs npm 11.5.1 or newer.
+      - run: npm install -g npm@^11.5.1
 
       - run: npm ci
 
       - run: npm run build
+
+      - run: npm test
 
       - run: npm publish --provenance --access public
