@@ -15,6 +15,7 @@
  *   console.log(`Connected to ${client.taverns.size} taverns`);
  * });
  *
+ * // `content` needs the MESSAGE_CONTENT intent (or a mention of the bot)
  * client.on('messageCreate', (message) => {
  *   if (message.content === '!ping') {
  *     message.reply('Pong!');
@@ -33,6 +34,7 @@ import { VoiceManager } from './voice';
 import {
   BOT_TOKEN_PREFIX,
   FRIENDLY_EVENT_MAP,
+  GatewayAction,
   GatewayEvent,
   DEFAULT_API_URL,
   DEFAULT_WS_URL,
@@ -47,6 +49,7 @@ import type {
   Channel,
   Member,
   Message,
+  PaginatedMessages,
   InstalledTavern,
   SendMessageOptions,
   EditMessageOptions,
@@ -55,6 +58,8 @@ import type {
   UpdateChannelOptions,
   Interaction,
   InteractionCallbackData,
+  InteractionDeferOptions,
+  TypingEvent,
   DmChannel,
   DmMessage,
   DmMessagePage,
@@ -96,13 +101,17 @@ export interface ActionableDmMessage extends DmMessage {
 
 // ─── Extended Interaction with helper methods ──────────────
 
-/** An interaction enriched with convenience methods. */
+/**
+ * An interaction enriched with convenience methods. It gets one answer:
+ * reply(), or deferReply() and then reply() or followUp() once. To post more,
+ * use sendMessage(). An interaction expires after 15 minutes.
+ */
 export interface ActionableInteraction extends Interaction {
-  /** Reply to this interaction. */
+  /** Answer this interaction (once; also after deferReply()). */
   reply(content: string | InteractionCallbackData): Promise<void>;
-  /** Acknowledge the interaction and show a loading state. */
-  deferReply(): Promise<void>;
-  /** Send a follow-up message after replying or deferring. */
+  /** Acknowledge the interaction and show a loading state; answer it later. */
+  deferReply(options?: InteractionDeferOptions): Promise<void>;
+  /** Send the answer after deferReply(). Only once, and not after reply(). */
   followUp(content: string | InteractionCallbackData): Promise<void>;
   /** Send a regular message to the channel where the interaction was invoked. */
   sendMessage(options: SendMessageOptions | string): Promise<Message>;
@@ -254,23 +263,7 @@ export class Client extends EventEmitter {
 
     // Step 3: Fetch channels for each tavern (parallel, best-effort)
     this.emit('debug', 'Fetching channels for all taverns...');
-    const channelFetches = this._application.taverns.map(async (installed) => {
-      try {
-        const channels = await this.rest.getChannels(installed.id);
-        for (const channel of channels) {
-          channel.tavernId = installed.id;
-          this.channels.set(channel.id, channel);
-        }
-        // Attach channels to the tavern object
-        const tavern = this.taverns.get(installed.id);
-        if (tavern) {
-          tavern.channels = channels;
-        }
-      } catch (err) {
-        this.emit('debug', `Failed to fetch channels for tavern ${installed.id}: ${(err as Error).message}`);
-      }
-    });
-    await Promise.all(channelFetches);
+    await Promise.all(this._application.taverns.map((installed) => this.cacheChannels(installed.id)));
 
     // Step 4: Connect to the WebSocket gateway
     this.emit('debug', 'Connecting to gateway...');
@@ -350,14 +343,14 @@ export class Client extends EventEmitter {
   }
 
   /**
-   * Get messages from a channel.
+   * Get one page of a channel's history, oldest first (`{ messages, hasMore }`).
    */
-  async getMessages(tavernId: string, channelId: string, options?: GetMessagesOptions): Promise<Message[]> {
+  async getMessages(tavernId: string, channelId: string, options?: GetMessagesOptions): Promise<PaginatedMessages> {
     return this.rest.getMessages(tavernId, channelId, options);
   }
 
   /**
-   * Edit a message.
+   * Edit the text of one of the bot's own messages.
    */
   async editMessage(tavernId: string, messageId: string, options: EditMessageOptions | string): Promise<Message> {
     const opts: EditMessageOptions = typeof options === 'string' ? { content: options } : options;
@@ -400,12 +393,15 @@ export class Client extends EventEmitter {
   }
 
   /**
-   * Get members of a tavern (with caching).
+   * Get every member of a tavern, keyed by user ID (the API has no pages).
+   * The result is cached and kept up to date by memberJoin and memberLeave
+   * (with the TAVERN_MEMBERS intent).
    */
-  async getMembers(tavernId: string, options?: { limit?: number; after?: string }): Promise<Collection<string, Member>> {
-    const members = await this.rest.getMembers(tavernId, options);
+  async getMembers(tavernId: string): Promise<Collection<string, Member>> {
+    const members = await this.rest.getMembers(tavernId);
     const collection = new Collection<string, Member>();
     for (const member of members) {
+      member.tavernId = tavernId;
       collection.set(member.userId, member);
     }
     this.memberCache.set(tavernId, collection);
@@ -413,10 +409,15 @@ export class Client extends EventEmitter {
   }
 
   /**
-   * Get a specific member of a tavern.
+   * Get one member of a tavern (a person or a bot) by user ID.
    */
   async getMember(tavernId: string, userId: string): Promise<Member> {
-    return this.rest.getMember(tavernId, userId);
+    const member = await this.rest.getMember(tavernId, userId);
+    if (member) {
+      member.tavernId = tavernId;
+      this.memberCache.get(tavernId)?.set(member.userId, member);
+    }
+    return member;
   }
 
   // ─── Member Moderation ────────────────────────────────
@@ -464,10 +465,16 @@ export class Client extends EventEmitter {
   }
 
   /**
-   * Send a typing indicator to a channel.
+   * Show the bot as typing in a channel. It shows for about 8 seconds; send it
+   * again to keep it, or call stopTyping().
    */
   startTyping(tavernId: string, channelId: string): void {
-    this.gateway.send('tavern_typing_start', { tavernId, channelId });
+    this.gateway.send(GatewayAction.TYPING_START, { tavernId, channelId });
+  }
+
+  /** Stop showing the bot as typing in a channel. */
+  stopTyping(tavernId: string, channelId: string): void {
+    this.gateway.send(GatewayAction.TYPING_STOP, { tavernId, channelId });
   }
 
   // ─── Direct Messages ──────────────────────────────────
@@ -615,6 +622,13 @@ export class Client extends EventEmitter {
     // Update caches based on events
     this.updateCaches(eventName, data);
 
+    // One wire event for both: `isTyping` says which
+    if (eventName === GatewayEvent.TYPING_INDICATOR) {
+      const typing = data as TypingEvent;
+      this.emit(typing?.isTyping === false ? 'typingStop' : 'typingStart', typing);
+      return;
+    }
+
     // Map to friendly event name and emit
     const friendlyName = FRIENDLY_EVENT_MAP[eventName];
     if (friendlyName) {
@@ -662,43 +676,48 @@ export class Client extends EventEmitter {
         break;
       }
       case GatewayEvent.CHANNEL_DELETED: {
-        this.channels.delete(payload.id as string);
+        const channelId = (payload.channelId ?? payload.id) as string;
+        this.channels.delete(channelId);
         const tavern = this.taverns.get(payload.tavernId as string);
         if (tavern?.channels) {
-          tavern.channels = tavern.channels.filter((c) => c.id !== payload.id);
+          tavern.channels = tavern.channels.filter((c) => c.id !== channelId);
         }
         break;
       }
       case GatewayEvent.TAVERN_UPDATED: {
-        const tavern = this.taverns.get(payload.id as string);
+        const tavern = this.taverns.get((payload.id ?? payload.tavernId) as string);
         if (tavern) {
           Object.assign(tavern, payload);
         }
         break;
       }
       case GatewayEvent.BOT_INSTALLED: {
-        // New tavern install - add to cache
+        // New tavern install (or installed again) - add to cache
         const tavernId = payload.tavernId as string;
-        if (tavernId && !this.taverns.has(tavernId)) {
+        if (!tavernId) break;
+        const known = this.taverns.get(tavernId);
+        const name = typeof payload.tavernName === 'string' && payload.tavernName ? payload.tavernName : undefined;
+        if (known) {
+          if (name) known.name = name;
+          known.grantedPermissions = payload.grantedPermissions as string;
+        } else {
           this.taverns.set(tavernId, {
             id: tavernId,
-            name: (payload.tavernName as string) || 'Unknown',
+            name: name ?? 'Unknown',
             slug: '',
             iconUrl: null,
             memberCount: 0,
             grantedPermissions: payload.grantedPermissions as string,
           });
-          // Fetch full tavern data in background
-          this.rest.getChannels(tavernId).then((channels) => {
-            for (const channel of channels) {
-              channel.tavernId = tavernId;
-              this.channels.set(channel.id, channel);
-            }
-            const tavern = this.taverns.get(tavernId);
-            if (tavern) tavern.channels = channels;
-          }).catch((err) => {
-            this.emit('debug', `Failed to fetch channels for new tavern ${tavernId}: ${(err as Error).message}`);
-          });
+        }
+        // Fetch its channels in the background
+        void this.cacheChannels(tavernId);
+        break;
+      }
+      case GatewayEvent.BOT_PERMISSIONS_UPDATED: {
+        const tavern = this.taverns.get(payload.tavernId as string);
+        if (tavern && typeof payload.grantedPermissions === 'string') {
+          tavern.grantedPermissions = payload.grantedPermissions;
         }
         break;
       }
@@ -715,20 +734,11 @@ export class Client extends EventEmitter {
         break;
       }
       case GatewayEvent.MEMBER_JOINED: {
+        // `{ tavernId, user, member }`: `member` is the new member's row
         const tavernMembers = this.memberCache.get(payload.tavernId as string);
-        if (tavernMembers) {
-          const member: Member = {
-            id: payload.userId as string,
-            userId: payload.userId as string,
-            tavernId: payload.tavernId as string,
-            status: 'ACTIVE' as any,
-            user: {
-              id: payload.userId as string,
-              displayName: payload.displayName as string,
-              avatarUrl: (payload.avatarUrl as string) || null,
-              isBot: payload.isBot as boolean,
-            },
-          };
+        const member = payload.member as Member | undefined;
+        if (tavernMembers && member?.userId) {
+          member.tavernId = payload.tavernId as string;
           tavernMembers.set(member.userId, member);
         }
         // Update member count
@@ -752,7 +762,8 @@ export class Client extends EventEmitter {
    * Enrich a raw message with convenience methods like .reply(), .edit(), .delete().
    */
   private enrichMessage(raw: Message): ActionableMessage {
-    const tavernId = this.findTavernForChannel(raw.channelId);
+    // Every tavern event names its tavern; the channel cache is the fallback.
+    const tavernId = raw.tavernId || this.findTavernForChannel(raw.channelId);
     const message = raw as ActionableMessage;
     message.tavernId = tavernId;
 
@@ -817,8 +828,8 @@ export class Client extends EventEmitter {
       return this.rest.replyToInteraction(raw.id, data);
     };
 
-    interaction.deferReply = async (): Promise<void> => {
-      return this.rest.deferInteraction(raw.id);
+    interaction.deferReply = async (options?: InteractionDeferOptions): Promise<void> => {
+      return this.rest.deferInteraction(raw.id, options);
     };
 
     interaction.followUp = async (content: string | InteractionCallbackData): Promise<void> => {
@@ -832,6 +843,26 @@ export class Client extends EventEmitter {
     };
 
     return interaction;
+  }
+
+  /**
+   * Fetch a tavern's channels and categories into the cache (best effort).
+   */
+  private async cacheChannels(tavernId: string): Promise<void> {
+    try {
+      const { channels, categories } = await this.rest.getChannelList(tavernId);
+      for (const channel of channels) {
+        channel.tavernId = tavernId;
+        this.channels.set(channel.id, channel);
+      }
+      const tavern = this.taverns.get(tavernId);
+      if (tavern) {
+        tavern.channels = channels;
+        tavern.categories = categories;
+      }
+    } catch (err) {
+      this.emit('debug', `Failed to fetch channels for tavern ${tavernId}: ${(err as Error).message}`);
+    }
   }
 
   /**

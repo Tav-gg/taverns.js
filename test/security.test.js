@@ -143,7 +143,8 @@ test('a crafted ID like "../evil" cannot change the route of any REST helper', a
     ['kickMember', ['t', E]], ['banMember', [E, 'u']], ['unbanMember', ['t', E]],
     ['muteMember', [E, 'u']], ['unmuteMember', ['t', E]], ['getRoles', [E]],
     ['createRole', [E, { name: 'r' }]], ['updateRole', ['t', E, {}]], ['deleteRole', ['t', E]],
-    ['addMemberRole', ['t', 'u', E]], ['removeMemberRole', ['t', E, 'r']],
+    ['addMemberRole', ['t', 'u', E]], ['removeMemberRole', ['t', E, 'r']], ['reorderRoles', [E, []]],
+    ['getChannelList', [E]], ['getCategories', [E]], ['searchMembers', [E, 'q']],
     ['createThread', ['t', E, { name: 'x' }]], ['getThreads', ['t', E]], ['getActiveThreads', [E]],
     ['deleteCommand', [E]], ['joinVoice', ['t', E]], ['leaveVoice', [E]],
     ['replyToInteraction', [E, { content: 'x' }]], ['deferInteraction', [E]],
@@ -236,43 +237,69 @@ async function withWsServer(onConnection, fn) {
   }
 }
 
-test('close codes 4001, 4003 and 4004 stop reconnecting and report authFailed', async () => {
-  for (const code of [4001, 4003, 4004]) {
-    await withWsServer((socket) => socket.close(code, 'Unauthorized'), async (url) => {
-      const debug = [];
+test('a refused handshake (HTTP 403) also stops reconnecting', async () => {
+  const server = http.createServer();
+  let upgrades = 0;
+  server.on('upgrade', (req, socket) => {
+    upgrades += 1;
+    socket.end('HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const gateway = new Gateway({ token: TOKEN, url: `ws://127.0.0.1:${server.address().port}`, allowInsecure: true });
+  try {
+    await assert.rejects(gateway.connect(), /Authentication failed.*HTTP 403/);
+    assert.equal(gateway.reconnectTimer, null);
+    assert.equal(upgrades, 1);
+  } finally {
+    gateway.destroy();
+    server.close();
+  }
+});
+
+test('every close code the gateway uses is followed by a reconnect', async () => {
+  // 1000 age limit, 1001 no answer to pings, 1008 too many messages, 1009 frame
+  // too large, 1012 service restart; 4001 is not used by the gateway and is
+  // not treated as a refused token either.
+  for (const code of [1000, 1001, 1008, 1009, 1012, 4001]) {
+    await withWsServer((socket) => socket.close(code, 'bye'), async (url) => {
       const gateway = new Gateway({ token: TOKEN, url, allowInsecure: true });
-      gateway.on('debug', (message) => debug.push(message));
-      const failed = once(gateway, 'authFailed');
+      let authFailed = false;
+      gateway.on('authFailed', () => {
+        authFailed = true;
+      });
+      const closed = once(gateway, 'close');
       await gateway.connect();
-      const [err] = await failed;
-      assert.match(err.message, new RegExp(`Authentication failed.*${code}`));
-      assert.equal(gateway.reconnectTimer, null, `no reconnect after ${code}`);
-      assert.ok(!debug.join('\n').includes('hidden123'), 'token in debug output');
+      const [closeCode] = await closed;
+      assert.equal(closeCode, code);
+      assert.notEqual(gateway.reconnectTimer, null, `reconnect scheduled after ${code}`);
+      assert.equal(authFailed, false, `no authFailed after ${code}`);
       gateway.destroy();
     });
   }
 });
 
 test('the client turns a refused token into an error event', async () => {
-  await withWsServer((socket) => socket.close(4001, 'Unauthorized'), async (url) => {
-    const client = new Client({ token: TOKEN, wsUrl: url, apiUrl: 'http://127.0.0.1:1/api/v1', allowInsecure: true });
+  const server = http.createServer();
+  server.on('upgrade', (req, socket) => {
+    socket.end('HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const url = `ws://127.0.0.1:${server.address().port}`;
+  const client = new Client({ token: TOKEN, wsUrl: url, apiUrl: 'http://127.0.0.1:1/api/v1', allowInsecure: true });
+  try {
+    // A refusal after a lost connection: the reconnect reports it as an error event
     const errored = once(client, 'error');
-    await client.gateway.connect();
+    client.gateway.state = 2; // as if it had been connected
+    client.gateway.scheduleReconnect();
     const [err] = await errored;
     assert.match(err.message, /Authentication failed/);
+    assert.equal(client.gateway.reconnectTimer, null);
+  } finally {
     client.destroy();
-  });
-});
-
-test('an ordinary close still reconnects', async () => {
-  await withWsServer((socket) => socket.close(1001, 'restart'), async (url) => {
-    const gateway = new Gateway({ token: TOKEN, url, allowInsecure: true });
-    const closed = once(gateway, 'close');
-    await gateway.connect();
-    await closed;
-    assert.notEqual(gateway.reconnectTimer, null, 'reconnect scheduled');
-    gateway.destroy();
-  });
+    server.close();
+  }
 });
 
 // ─── Versions agree ─────────────────────────────────────────

@@ -134,7 +134,7 @@ test('GET and PUT are sent again after a server error or a lost connection', asy
   await withApi(async ({ rest, reset, seen, waits }) => {
     for (const failure of FAILURES) {
       reset(failure, 'ok');
-      assert.deepEqual(await rest.getChannels('t'), { ok: true }, failure);
+      assert.deepEqual(await rest.getTavern('t'), { ok: true }, failure);
       assert.equal(seen().length, 2, `GET after ${failure}`);
       assert.deepEqual(waits, [1000], `GET after ${failure}`);
 

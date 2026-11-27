@@ -4,6 +4,77 @@ All notable changes to taverns.js are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/) (while the version is 0.x, a minor release can break things).
 
+## [0.4.0] - 2026-11-27
+
+This release makes the SDK match the Taverns API. Several calls and events did not work in 0.3.0; they do now.
+
+### Added
+
+- `botPermissionsUpdated` event, sent when a tavern changes the permissions it grants the bot. The cached tavern's
+  `grantedPermissions` follows it.
+- `roleCreate` event (needs the `TAVERN_ROLES` intent).
+- `botInstalled` has the tavern's name (`tavernName`), and the cached tavern uses it.
+- `rest.reorderRoles()`. With `MANAGE_ROLES`, a bot can create, edit, reorder, delete, give and take away roles below
+  its own highest role, and give a role only permissions it has itself.
+- `rest.searchMembers(tavernId, query, { limit })` finds members by name, nickname or @handle.
+- `rest.getChannelList()` (channels and categories in one request), `rest.getCategories()` and `tavern.categories`.
+- `client.stopTyping()`.
+- `deferReply({ ephemeral })` and `rest.deferInteraction(id, { ephemeral })`.
+- Messages and interaction answers can be embeds only: `content` may be left out when `embeds` are given.
+- More options the API takes: `replyPing` and `nonce` when sending, `around` and `direction` for history,
+  `includeArchived` for threads, `unicodeEmoji` and `isHoisted` for roles, and the search filters `channelId`,
+  `mentionsUserId`, `has`, `before`, `after` and `includeThreads`.
+- `gateway.latency`: the round trip of the last ping, in milliseconds.
+- `messageCreate` and `interactionCreate` listeners are typed with their helper methods (`reply()` and the others).
+
+### Changed
+
+- **Breaking:** `client.getMessages()` and `rest.getMessages()` return `{ messages, hasMore }` instead of a list.
+- **Breaking:** `searchMessages()` takes `q` and `fromUserId`, its `offset` is a message ID (not a number), and it
+  answers `{ messages, hasMore, total, nextOffset }`. It always searches the whole tavern; `channelId` narrows it to one
+  hall and its threads.
+- **Breaking:** `getMembers(tavernId)` takes no paging options. The API returns every member at once and never used
+  them. Use `searchMembers()` to find members by name.
+- **Breaking:** `SendMessageOptions` has no `metadata`, which the API refused, and its `content` is optional.
+- **Breaking:** the event types listed under Fixed. `BulkDeleteEvent.count` and `PaginatedMessages.nextCursor` are
+  removed, because the API never sends them.
+- **Breaking:** `GatewayEvent.TYPING_START` and `TYPING_STOP` are replaced by `GatewayEvent.TYPING_INDICATOR`, the
+  event the gateway sends. The `GatewayAction` values for sending typing are unchanged.
+- Like on Discord, a bot without the `MESSAGE_CONTENT` intent gets empty `content` (and no embeds or attachments) for
+  other people's tavern messages, in events and in the API's answers. The bot's own messages, messages that mention
+  the bot and its direct messages keep their content. Turn on Message Content in the Intents tab of your bot's page in
+  the Developer Portal. The README explains it.
+- An interaction gets one answer: `reply()`, or `deferReply()` and then one `reply()` or `followUp()`. The README and
+  the method notes say so.
+
+### Deprecated
+
+- The `query` and `senderId` options of `searchMessages()` still work. Use `q` and `fromUserId`.
+
+### Fixed
+
+- **Replying to messages works.** The channel list comes back as `{ channels, categories }`, which 0.3.0 read as a
+  plain list, so the channel cache stayed empty and `message.reply()`, `edit()`, `delete()`, `pin()`, `unpin()` and
+  `react()` failed (the `!ping` example too). The cache is filled now, and the message helpers use the tavern named in
+  the event, so they work even for a channel that is not cached. `client.rest.getChannels()` returns the channels.
+- `getMessages()` returns the page the API sends, `{ messages, hasMore }`.
+- `searchMessages()` sends what the API takes: `q`, `fromUserId`, and `offset` as the `nextOffset` message ID of the
+  previous page. It answers `{ messages, hasMore, total, nextOffset }`.
+- `editMessage()` and `message.edit()` send only the new text. Anything else made the API refuse the edit.
+- `getMember()` returns one member (a person or a bot), `kickMember()` keeps its reason in the tavern's audit log, and
+  `addMemberRole()` and `removeMemberRole()` work with a user ID.
+- `typingStart` and `typingStop` are emitted. They never fired before.
+- `messageDelete`, `messagePinned` and `messageUnpinned` carry `messageId`, `channelDelete` carries `channelId` and
+  `roleDelete` carries `roleId`, as the API sends them (the types said `id`). A deleted channel now leaves the cache.
+- `memberJoin` carries `{ tavernId, user, member }`, and the member cache keeps the whole member.
+- The `Member` type matches the API: the membership `id`, `userId`, `nickname`, `joinedAt`, `user`, `roles`,
+  `isOnline`, `status` (online, idle, do not disturb or `null`), `isOwner` and `isBot`.
+- The connection is kept alive the way the gateway expects. The client sends a `ping` with each heartbeat and treats a
+  connection that has heard nothing for 75 seconds as lost, so it reconnects instead of waiting forever. Every
+  disconnect by the gateway (for example a service restart) is followed by a reconnect. Only a token refused when
+  connecting (HTTP 401 or 403) stops it. Close codes 4001, 4003 and 4004 are not used by the gateway and no longer mean
+  a refused token.
+
 ## [0.3.0] - 2026-11-18
 
 This release also contains the member moderation helpers from 0.2.2, which was tagged but never
@@ -97,5 +168,6 @@ published to npm.
 
 Earlier versions are described in the git history.
 
+[0.4.0]: https://github.com/Tav-gg/taverns.js/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Tav-gg/taverns.js/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/Tav-gg/taverns.js/tree/v0.2.1

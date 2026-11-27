@@ -13,6 +13,7 @@
  *   console.log(`Logged in as ${client.user.displayName}`);
  * });
  *
+ * // `content` needs the MESSAGE_CONTENT intent (or a mention of the bot)
  * client.on('messageCreate', (message) => {
  *   if (message.content === '!ping') {
  *     message.reply('Pong!');

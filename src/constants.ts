@@ -56,17 +56,27 @@ export enum MemberStatus {
 
 export const GatewayIntents = {
   TAVERN_MESSAGES:   1n << 0n,
-  MESSAGE_CONTENT:   1n << 1n,   // Privileged
-  TAVERN_MEMBERS:    1n << 2n,   // Privileged
+  /**
+   * Privileged. Without it, `content` (and embeds and attachments) of tavern
+   * messages is empty, except in the bot's own messages, messages that mention
+   * the bot and its direct messages. Turn it on in the Intents tab of the bot's
+   * page in the Developer Portal. A public bot in more than 100 taverns needs
+   * review to keep a privileged intent.
+   */
+  MESSAGE_CONTENT:   1n << 1n,
+  /** Privileged. Members joining, leaving, changing and being muted (memberJoin, memberLeave, ...). */
+  TAVERN_MEMBERS:    1n << 2n,
   TAVERN_MODERATION: 1n << 3n,
   TAVERN_CHANNELS:   1n << 4n,
   TAVERN_THREADS:    1n << 5n,
   TAVERN_FORUMS:     1n << 6n,
+  /** Roles created, changed, reordered and deleted. */
   TAVERN_ROLES:      1n << 7n,
   TAVERN_SETTINGS:   1n << 8n,
   TAVERN_EVENTS:     1n << 9n,
   TAVERN_VOICE:      1n << 10n,
   TAVERN_BROADCASTS: 1n << 11n,
+  /** Typing in tavern halls (typingStart, typingStop). */
   TAVERN_TYPING:     1n << 12n,
   TAVERN_REACTIONS:  1n << 13n,
   TAVERN_PINS:       1n << 14n,
@@ -140,6 +150,7 @@ export enum GatewayEvent {
   FORUM_POST_TAGS_UPDATED = 'tavern_forum_post_tags_updated',
 
   // Roles
+  ROLE_CREATED = 'tavern_role_created',
   ROLE_UPDATED = 'tavern_role_updated',
   ROLE_DELETED = 'tavern_role_deleted',
 
@@ -158,13 +169,13 @@ export enum GatewayEvent {
   VOICE_SERVER_MUTE = 'tavern_voice_server_mute',
   VOICE_USER_DISCONNECTED = 'tavern_voice_user_disconnected',
 
-  // Typing
-  TYPING_START = 'tavern_typing_start',
-  TYPING_STOP = 'tavern_typing_stop',
+  // Typing (`isTyping` says whether it started or stopped)
+  TYPING_INDICATOR = 'tavern_typing_indicator',
 
   // Bot lifecycle
   BOT_INSTALLED = 'bot_installed',
   BOT_REMOVED = 'bot_removed',
+  BOT_PERMISSIONS_UPDATED = 'bot_permissions_updated',
 
   // Bot voice (sent to the bot about its own voice connection)
   BOT_VOICE_DISCONNECTED = 'bot_voice_disconnected',
@@ -184,13 +195,16 @@ export enum GatewayEvent {
 
 export enum GatewayAction {
   HEARTBEAT = 'heartbeat',
+  /** Answered by the gateway with a `pong` event. */
+  PING = 'ping',
   TYPING_START = 'tavern_typing_start',
   TYPING_STOP = 'tavern_typing_stop',
   MARK_READ = 'tavern_mark_read',
 }
 
 // ─── Friendly Event Name Map ────────────────────────────────
-// Maps gateway wire events to friendly SDK event names.
+// Maps gateway wire events to friendly SDK event names. The typing indicator is
+// not listed: the client emits it as typingStart or typingStop.
 
 export const FRIENDLY_EVENT_MAP: Record<string, string> = {
   [GatewayEvent.MESSAGE_CREATE]: 'messageCreate',
@@ -211,6 +225,7 @@ export const FRIENDLY_EVENT_MAP: Record<string, string> = {
   [GatewayEvent.THREAD_UPDATED]: 'threadUpdate',
   [GatewayEvent.THREAD_DELETED]: 'threadDelete',
   [GatewayEvent.THREAD_ARCHIVED]: 'threadArchived',
+  [GatewayEvent.ROLE_CREATED]: 'roleCreate',
   [GatewayEvent.ROLE_UPDATED]: 'roleUpdate',
   [GatewayEvent.ROLE_DELETED]: 'roleDelete',
   [GatewayEvent.TAVERN_UPDATED]: 'tavernUpdate',
@@ -220,10 +235,9 @@ export const FRIENDLY_EVENT_MAP: Record<string, string> = {
   [GatewayEvent.EVENT_STARTING]: 'eventStarting',
   [GatewayEvent.EVENT_ENDED]: 'eventEnded',
   [GatewayEvent.VOICE_STATE_UPDATE]: 'voiceStateUpdate',
-  [GatewayEvent.TYPING_START]: 'typingStart',
-  [GatewayEvent.TYPING_STOP]: 'typingStop',
   [GatewayEvent.BOT_INSTALLED]: 'botInstalled',
   [GatewayEvent.BOT_REMOVED]: 'botRemoved',
+  [GatewayEvent.BOT_PERMISSIONS_UPDATED]: 'botPermissionsUpdated',
   [GatewayEvent.BOT_VOICE_DISCONNECTED]: 'botVoiceDisconnected',
   [GatewayEvent.BOT_VOICE_UPDATED]: 'botVoiceUpdated',
   [GatewayEvent.INTERACTION_CREATE]: 'interactionCreate',

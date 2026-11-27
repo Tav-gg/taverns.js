@@ -16,19 +16,26 @@ import type {
   InstalledTavern,
   Tavern,
   Channel,
+  Category,
+  ChannelList,
   Member,
+  MemberSearchResult,
   Role,
+  RolePosition,
   Message,
+  PaginatedMessages,
   SendMessageOptions,
   EditMessageOptions,
   GetMessagesOptions,
   SearchMessagesOptions,
+  MessageSearchResult,
   CreateChannelOptions,
   UpdateChannelOptions,
   CreateRoleOptions,
   UpdateRoleOptions,
   BotCommand,
   InteractionCallbackData,
+  InteractionDeferOptions,
   DmChannel,
   DmMessage,
   DmMessagePage,
@@ -51,7 +58,7 @@ interface RequestOptions {
   method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
   path: string;
   body?: unknown;
-  query?: Record<string, string | number | undefined>;
+  query?: Record<string, string | number | boolean | undefined>;
 }
 
 export interface RESTClientOptions {
@@ -131,7 +138,7 @@ export class RESTClient extends EventEmitter {
 
   // ─── Core HTTP Methods ──────────────────────────────────
 
-  async get<T = unknown>(path: string, query?: Record<string, string | number | undefined>): Promise<T> {
+  async get<T = unknown>(path: string, query?: Record<string, string | number | boolean | undefined>): Promise<T> {
     return this.request<T>({ method: 'GET', path, query });
   }
 
@@ -172,9 +179,24 @@ export class RESTClient extends EventEmitter {
 
   // ─── Channels ──────────────────────────────────────────
 
-  /** List all channels in a tavern. */
+  /** The channels and categories of a tavern that the bot can see, in one request. */
+  async getChannelList(tavernId: string): Promise<ChannelList> {
+    const list = await this.get<Partial<ChannelList> | Channel[] | undefined>(route`/taverns/${tavernId}/channels`);
+    if (Array.isArray(list)) return { channels: list, categories: [] };
+    return {
+      channels: Array.isArray(list?.channels) ? list.channels : [],
+      categories: Array.isArray(list?.categories) ? list.categories : [],
+    };
+  }
+
+  /** List the channels of a tavern that the bot can see. */
   async getChannels(tavernId: string): Promise<Channel[]> {
-    return this.get<Channel[]>(route`/taverns/${tavernId}/channels`);
+    return (await this.getChannelList(tavernId)).channels;
+  }
+
+  /** List the categories of a tavern that the bot can see. */
+  async getCategories(tavernId: string): Promise<Category[]> {
+    return (await this.getChannelList(tavernId)).categories;
   }
 
   /** Create a new channel in a tavern. */
@@ -194,23 +216,29 @@ export class RESTClient extends EventEmitter {
 
   // ─── Messages ──────────────────────────────────────────
 
-  /** Send a message to a channel. */
+  /** Send a message to a channel. It needs content or at least one embed. */
   async sendMessage(tavernId: string, channelId: string, options: SendMessageOptions): Promise<Message> {
     return this.post<Message>(route`/taverns/${tavernId}/channels/${channelId}/messages`, options);
   }
 
-  /** Get messages from a channel. */
-  async getMessages(tavernId: string, channelId: string, options?: GetMessagesOptions): Promise<Message[]> {
+  /**
+   * Get one page of a channel's history, oldest first. Newest page by default;
+   * page back with `before` (the first message's ID) while `hasMore` is true.
+   */
+  async getMessages(tavernId: string, channelId: string, options?: GetMessagesOptions): Promise<PaginatedMessages> {
     const query: Record<string, string | number | undefined> = {};
     if (options?.limit) query.limit = options.limit;
     if (options?.before) query.before = options.before;
     if (options?.after) query.after = options.after;
-    return this.get<Message[]>(route`/taverns/${tavernId}/channels/${channelId}/messages`, query);
+    if (options?.direction) query.direction = options.direction;
+    if (options?.around) query.around = options.around;
+    const page = await this.get<PaginatedMessages | undefined>(route`/taverns/${tavernId}/channels/${channelId}/messages`, query);
+    return { ...page, messages: Array.isArray(page?.messages) ? page.messages : [], hasMore: page?.hasMore === true };
   }
 
-  /** Edit a message. */
+  /** Edit the text of one of the bot's own messages. Only `content` can change. */
   async editMessage(tavernId: string, messageId: string, options: EditMessageOptions): Promise<Message> {
-    return this.patch<Message>(route`/taverns/${tavernId}/messages/${messageId}`, options);
+    return this.patch<Message>(route`/taverns/${tavernId}/messages/${messageId}`, { content: options.content });
   }
 
   /** Delete a message. */
@@ -233,19 +261,31 @@ export class RESTClient extends EventEmitter {
     return this.get<Message[]>(route`/taverns/${tavernId}/channels/${channelId}/pins`);
   }
 
-  /** Search messages in a tavern or specific channel. */
-  async searchMessages(tavernId: string, options: SearchMessagesOptions): Promise<{ messages: Message[]; total: number }> {
-    const query: Record<string, string | number | undefined> = {
-      query: options.query,
+  /**
+   * Search a tavern's messages (needs READ_MESSAGE_HISTORY), newest first. Give
+   * words (`q`) or at least one filter. For the next page, pass the answer's
+   * `nextOffset` as `offset` while `hasMore` is true.
+   */
+  async searchMessages(tavernId: string, options: SearchMessagesOptions): Promise<MessageSearchResult> {
+    const query: Record<string, string | number | boolean | undefined> = {
+      q: options.q ?? options.query,
+      fromUserId: options.fromUserId ?? options.senderId,
+      channelId: options.channelId,
+      mentionsUserId: options.mentionsUserId,
+      has: Array.isArray(options.has) ? options.has.join(',') || undefined : options.has,
+      before: options.before,
+      after: options.after,
+      limit: options.limit,
+      offset: options.offset,
+      includeThreads: options.includeThreads,
     };
-    if (options.senderId) query.senderId = options.senderId;
-    if (options.limit) query.limit = options.limit;
-    if (options.offset) query.offset = options.offset;
-
-    if (options.channelId) {
-      return this.get(route`/taverns/${tavernId}/channels/${options.channelId}/messages/search`, query);
-    }
-    return this.get(route`/taverns/${tavernId}/messages/search`, query);
+    const result = await this.get<Partial<MessageSearchResult> | undefined>(route`/taverns/${tavernId}/messages/search`, query);
+    return {
+      messages: Array.isArray(result?.messages) ? result.messages : [],
+      hasMore: result?.hasMore === true,
+      total: typeof result?.total === 'number' ? result.total : null,
+      nextOffset: typeof result?.nextOffset === 'string' ? result.nextOffset : null,
+    };
   }
 
   /** Add a reaction to a message. */
@@ -265,22 +305,37 @@ export class RESTClient extends EventEmitter {
 
   // ─── Members ───────────────────────────────────────────
 
-  /** List members of a tavern. */
-  async getMembers(tavernId: string, options?: { limit?: number; after?: string }): Promise<Member[]> {
-    const query: Record<string, string | number | undefined> = {};
-    if (options?.limit) query.limit = options.limit;
-    if (options?.after) query.after = options.after;
-    return this.get<Member[]>(route`/taverns/${tavernId}/members`, query);
+  /**
+   * List every member of a tavern (people and bots) in one answer, oldest
+   * member first. The list has no pages; to find members by name, use
+   * searchMembers().
+   */
+  async getMembers(tavernId: string): Promise<Member[]> {
+    const members = await this.get<Member[] | undefined>(route`/taverns/${tavernId}/members`);
+    return Array.isArray(members) ? members : [];
   }
 
-  /** Get a specific member. */
+  /**
+   * Find members whose name, nickname or @handle contains `query`.
+   * `limit`: 1 to 50 (default 20).
+   */
+  async searchMembers(tavernId: string, query: string, options?: { limit?: number }): Promise<MemberSearchResult[]> {
+    const result = await this.get<{ members?: MemberSearchResult[] } | undefined>(route`/taverns/${tavernId}/members`, {
+      q: query,
+      limit: options?.limit,
+    });
+    return Array.isArray(result?.members) ? result.members : [];
+  }
+
+  /** Get one member (a person or a bot) by user ID, in the same shape as getMembers(). */
   async getMember(tavernId: string, userId: string): Promise<Member> {
     return this.get<Member>(route`/taverns/${tavernId}/members/${userId}`);
   }
 
   /**
    * Kick a member from a tavern. Requires the bot to have KICK_MEMBERS.
-   * The tavern owner can never be kicked.
+   * The tavern owner can never be kicked. The reason (up to 500 characters)
+   * is kept in the tavern's audit log.
    */
   async kickMember(tavernId: string, userId: string, reason?: string): Promise<void> {
     await this.delete(route`/taverns/${tavernId}/members/${userId}`, reason ? { reason } : undefined);
@@ -333,27 +388,42 @@ export class RESTClient extends EventEmitter {
     return this.get<Role[]>(route`/taverns/${tavernId}/roles`);
   }
 
-  /** Create a new role in a tavern. */
+  // Creating, editing, reordering, deleting and giving roles needs MANAGE_ROLES,
+  // and works only on roles below the bot's highest role. A role can get only
+  // permissions the bot has itself. A newly installed bot's own role sits at
+  // the bottom, just above @everyone, until the tavern owner moves it up.
+
+  /** Create a new role in a tavern (requires MANAGE_ROLES). */
   async createRole(tavernId: string, options: CreateRoleOptions): Promise<Role> {
     return this.post<Role>(route`/taverns/${tavernId}/roles`, options);
   }
 
-  /** Update a role. */
+  /** Update a role below the bot's highest role (requires MANAGE_ROLES). */
   async updateRole(tavernId: string, roleId: string, options: UpdateRoleOptions): Promise<Role> {
     return this.patch<Role>(route`/taverns/${tavernId}/roles/${roleId}`, options);
   }
 
-  /** Delete a role. */
+  /**
+   * Move roles (requires MANAGE_ROLES). Only roles below the bot's highest
+   * role, and never to or above it. @everyone always stays at 0.
+   */
+  async reorderRoles(tavernId: string, roles: RolePosition[]): Promise<void> {
+    await this.patch(route`/taverns/${tavernId}/roles/reorder`, {
+      roles: roles.map(({ id, position }) => ({ id, position })),
+    });
+  }
+
+  /** Delete a role below the bot's highest role (requires MANAGE_ROLES). */
   async deleteRole(tavernId: string, roleId: string): Promise<void> {
     await this.delete(route`/taverns/${tavernId}/roles/${roleId}`);
   }
 
-  /** Add a role to a member. */
+  /** Give a member a role (requires MANAGE_ROLES). Takes the user ID (or the membership ID). */
   async addMemberRole(tavernId: string, userId: string, roleId: string): Promise<void> {
     await this.post(route`/taverns/${tavernId}/members/${userId}/roles/${roleId}`);
   }
 
-  /** Remove a role from a member. */
+  /** Take a role from a member (requires MANAGE_ROLES). Takes the user ID (or the membership ID). */
   async removeMemberRole(tavernId: string, userId: string, roleId: string): Promise<void> {
     await this.delete(route`/taverns/${tavernId}/members/${userId}/roles/${roleId}`);
   }
@@ -369,9 +439,10 @@ export class RESTClient extends EventEmitter {
     return this.post<Channel>(route`/taverns/${tavernId}/channels/${channelId}/threads`, options);
   }
 
-  /** List threads in a channel. */
-  async getThreads(tavernId: string, channelId: string): Promise<Channel[]> {
-    return this.get<Channel[]>(route`/taverns/${tavernId}/channels/${channelId}/threads`);
+  /** List threads in a channel (archived ones too with `includeArchived`). */
+  async getThreads(tavernId: string, channelId: string, options?: { includeArchived?: boolean }): Promise<Channel[]> {
+    const query = options?.includeArchived ? { includeArchived: 'true' } : undefined;
+    return this.get<Channel[]>(route`/taverns/${tavernId}/channels/${channelId}/threads`, query);
   }
 
   /** Get active threads across the tavern. */
@@ -413,18 +484,27 @@ export class RESTClient extends EventEmitter {
   }
 
   // ─── Interactions ─────────────────────────────────────
+  // An interaction gets one answer: reply, or defer and then answer once with
+  // a reply or a follow-up. A second answer is refused. It expires after
+  // 15 minutes. To post more, send ordinary messages to the channel.
 
-  /** Reply to an interaction. */
+  /** Answer an interaction (once; also after deferring). Needs content or an embed. */
   async replyToInteraction(interactionId: string, data: InteractionCallbackData): Promise<void> {
     await this.post(route`/interactions/${interactionId}/callback`, data);
   }
 
-  /** Acknowledge an interaction with a deferred response (shows loading state). */
-  async deferInteraction(interactionId: string): Promise<void> {
-    await this.post(route`/interactions/${interactionId}/defer`);
+  /** Acknowledge an interaction and show a loading state. Answer it later with a reply or a follow-up. */
+  async deferInteraction(interactionId: string, options?: InteractionDeferOptions): Promise<void> {
+    await this.post(
+      route`/interactions/${interactionId}/defer`,
+      options?.ephemeral !== undefined ? { ephemeral: options.ephemeral } : undefined,
+    );
   }
 
-  /** Send a follow-up message after replying or deferring an interaction. */
+  /**
+   * Send the answer to a deferred interaction. Only after deferInteraction(),
+   * and only once; it is refused after a reply.
+   */
   async followUpInteraction(interactionId: string, data: InteractionCallbackData): Promise<void> {
     await this.post(route`/interactions/${interactionId}/followup`, data);
   }
@@ -512,7 +592,7 @@ export class RESTClient extends EventEmitter {
         'Authorization': `Bot ${this.token}`,
         'Content-Type': 'application/json',
         'Accept': 'application/json',
-        'User-Agent': 'taverns.js/0.3.0', // keep in step with package.json (a test checks)
+        'User-Agent': 'taverns.js/0.4.0', // keep in step with package.json (a test checks)
       },
     };
 

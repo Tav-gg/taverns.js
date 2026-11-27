@@ -28,6 +28,7 @@ client.on('messageCreate', async (message) => {
   // Ignore messages from bots (including self)
   if (message.sender.id === client.user.id) return;
 
+  // Reading `content` needs the Message Content intent (see "Message content" below)
   if (message.content === '!ping') {
     await message.reply('Pong!');
   }
@@ -38,8 +39,9 @@ client.on('messageCreate', async (message) => {
   }
 });
 
+// Needs the TAVERN_MEMBERS intent (privileged, like Message Content)
 client.on('memberJoin', (event) => {
-  console.log(`${event.displayName} joined tavern ${event.tavernId}`);
+  console.log(`${event.user.displayName} joined tavern ${event.tavernId}`);
 });
 
 client.on('error', (error) => {
@@ -58,6 +60,33 @@ client.login();
 - **Caching** - Taverns, channels, and members cached automatically
 - **Message helpers** - `message.reply()`, `message.edit()`, `message.delete()`, `message.react()`
 
+## Message content
+
+Like on Discord, `MESSAGE_CONTENT` is a privileged intent. Without it, the `content` of other people's tavern
+messages is empty (and so are their embeds and attachments), both in `messageCreate` events and in what
+`getMessages()` and the other REST calls return. The bot still gets the content of:
+
+- its own messages,
+- messages that mention the bot (`<@bot user id>`, which the apps insert when someone picks the bot; a reply to the
+  bot, a role mention or @everyone does not count),
+- its direct messages.
+
+To read every message, turn on **Message Content** in the Intents tab of your bot's page in the
+[Developer Portal](https://tav.gg/developers/home). A public bot in more than 100 taverns needs review to keep a
+privileged intent. `TAVERN_MEMBERS` (member joins and leaves) is privileged the same way.
+
+If you pass `intents` to the `Client`, include `GatewayIntents.MESSAGE_CONTENT` too: `GatewayIntents.DEFAULT` leaves
+the privileged intents out.
+
+```typescript
+import { Client, GatewayIntents } from 'taverns.js';
+
+const client = new Client({
+  token: process.env.TAVERN_BOT_TOKEN,
+  intents: GatewayIntents.DEFAULT | GatewayIntents.MESSAGE_CONTENT,
+});
+```
+
 ## Core Concepts
 
 ### Client
@@ -72,7 +101,8 @@ const client = new Client({
   allowInsecure: false,        // true accepts http:// and ws:// (local development only)
   autoReconnect: true,         // Auto-reconnect on disconnect
   maxReconnectAttempts: 10,    // Give up after N attempts
-  heartbeatInterval: 30000,    // Heartbeat interval (ms)
+  heartbeatInterval: 30000,    // Heartbeat and ping interval (ms)
+  intents: GatewayIntents.DEFAULT | GatewayIntents.MESSAGE_CONTENT, // Events to receive (left out: all the bot may get)
 });
 
 await client.login();
@@ -91,25 +121,32 @@ client.on('debug', (message) => { ... });
 // Messages
 client.on('messageCreate', (message) => { ... });
 client.on('messageUpdate', (event) => { ... });
-client.on('messageDelete', (event) => { ... });
-client.on('messageDeleteBulk', (event) => { ... });
+client.on('messageDelete', (event) => { ... });       // { messageId, channelId, tavernId }
+client.on('messageDeleteBulk', (event) => { ... });   // { messageIds, channelId, tavernId }
+client.on('messagePinned', (event) => { ... });       // { messageId, channelId, tavernId, message }
 
-// Members
-client.on('memberJoin', (event) => { ... });
-client.on('memberLeave', (event) => { ... });
+// Members (TAVERN_MEMBERS intent)
+client.on('memberJoin', (event) => { ... });          // { tavernId, user, member }
+client.on('memberLeave', (event) => { ... });         // { tavernId, userId, reason? }
 
 // Channels
 client.on('channelCreate', (channel) => { ... });
 client.on('channelUpdate', (event) => { ... });
-client.on('channelDelete', (event) => { ... });
+client.on('channelDelete', (event) => { ... });       // { channelId, tavernId }
 
 // Roles
+client.on('roleCreate', (event) => { ... });          // { tavernId, role }
 client.on('roleUpdate', (role) => { ... });
-client.on('roleDelete', (event) => { ... });
+client.on('roleDelete', (event) => { ... });          // { roleId, tavernId }
+
+// Typing (TAVERN_TYPING intent)
+client.on('typingStart', (event) => { ... });         // { tavernId, channelId, userId, displayName }
+client.on('typingStop', (event) => { ... });
 
 // Bot lifecycle
-client.on('botInstalled', (event) => { ... });
+client.on('botInstalled', (event) => { ... });        // { tavernId, tavernName, grantedPermissions }
 client.on('botRemoved', (event) => { ... });
+client.on('botPermissionsUpdated', (event) => { ... }); // { tavernId, grantedPermissions }
 
 // Direct messages (DIRECT_MESSAGES intent)
 client.on('dmMessageCreate', (message) => { ... });
@@ -155,12 +192,24 @@ For advanced use, access the REST client directly:
 
 ```typescript
 // Direct REST calls
-const channels = await client.rest.getChannels(tavernId);
-const members = await client.rest.getMembers(tavernId);
+const channels = await client.rest.getChannels(tavernId);       // or getChannelList() for channels and categories
+const members = await client.rest.getMembers(tavernId);         // every member, no pages
+const found = await client.rest.searchMembers(tavernId, 'ana'); // by name, nickname or @handle
 const message = await client.rest.sendMessage(tavernId, channelId, {
   content: 'Hello!',
 });
+
+// History comes in pages, oldest first: page back with `before` while `hasMore` is true
+const { messages, hasMore } = await client.rest.getMessages(tavernId, channelId, { limit: 50 });
+
+// Search (words, or filters such as fromUserId, channelId, mentionsUserId, has)
+const results = await client.rest.searchMessages(tavernId, { q: 'dragon', fromUserId: userId });
+const next = await client.rest.searchMessages(tavernId, { q: 'dragon', offset: results.nextOffset ?? undefined });
 ```
+
+Roles: with `MANAGE_ROLES` the bot can create, edit, reorder (`reorderRoles`), delete, give and take away roles that are
+below its own highest role, and give a role only permissions the bot has itself. A newly installed bot's role starts at
+the bottom, just above @everyone; the tavern owner moves it up. `addMemberRole` and `removeMemberRole` take the user ID.
 
 IDs passed to the REST helpers are escaped, so an ID taken from user input (a command option, message
 text) cannot point a request at another route. The low-level `client.rest.get/post/patch/put/delete`
@@ -170,6 +219,23 @@ A request answered with 429 is sent again after the wait the API asks for. After
 a dropped connection, only GET and PUT requests are sent again; POST, PATCH and DELETE requests are sent
 again only when the connection could not be opened at all, so a message, a kick or a ban is never sent
 twice. A request that still fails rejects with `TavernAPIError` (or the network error).
+
+## Slash Commands
+
+```typescript
+client.on('interactionCreate', async (interaction) => {
+  if (interaction.commandName === 'stats') {
+    await interaction.deferReply();                      // shows a loading state
+    const embed = await buildStats(interaction.userId);
+    await interaction.followUp({ embeds: [embed] });     // content may be left out when there are embeds
+  }
+});
+```
+
+An interaction gets **one** answer: `reply()`, or `deferReply()` followed by one `reply()` or `followUp()`. A second
+answer is refused, and an interaction expires after 15 minutes. To post more, use `interaction.sendMessage()`, which
+sends an ordinary message to the channel. `deferReply({ ephemeral: true })` makes the answer visible only to the person
+who used the command.
 
 ## Webhook Verification
 
@@ -322,8 +388,10 @@ const client = new Client({ token: process.env.TAVERN_BOT_TOKEN });
 ```
 
 The token is sent only over `https://` and `wss://`, and the SDK never writes it to `debug` output. If the
-gateway refuses the token (revoked, regenerated, or the bot was disabled), the client stops reconnecting
-and emits an `error` event that starts with "Authentication failed".
+gateway refuses the token when connecting (HTTP 401 or 403: revoked, regenerated, or the bot was disabled), the
+client stops reconnecting and emits an `error` event that starts with "Authentication failed". Any other
+disconnect (a service restart, a connection that went quiet, the gateway's periodic refresh) is followed by a
+reconnect with backoff.
 
 ## API Reference
 
@@ -336,17 +404,18 @@ and emits an `error` event that starts with "Authentication failed".
 | `sendMessage(tavernId, channelId, options)` | Send a message |
 | `editMessage(tavernId, messageId, options)` | Edit a message |
 | `deleteMessage(tavernId, messageId)` | Delete a message |
-| `getMessages(tavernId, channelId, options?)` | Fetch messages |
+| `getMessages(tavernId, channelId, options?)` | Fetch one page of messages (`{ messages, hasMore }`) |
 | `createChannel(tavernId, options)` | Create a channel |
 | `updateChannel(tavernId, channelId, options)` | Update a channel |
 | `deleteChannel(tavernId, channelId)` | Delete a channel |
-| `getMembers(tavernId, options?)` | List tavern members |
-| `getMember(tavernId, userId)` | Get a specific member |
+| `getMembers(tavernId)` | List every tavern member (cached) |
+| `getMember(tavernId, userId)` | Get one member (a person or a bot) |
 | `kickMember(tavernId, userId, reason?)` | Kick a member (requires `KICK_MEMBERS`) |
 | `banMember(tavernId, userId, options?)` | Ban a member (requires `BAN_MEMBERS`) |
 | `unbanMember(tavernId, userId)` | Lift a ban (requires `BAN_MEMBERS`) |
 | `muteMember(tavernId, userId, options?)` | Mute/timeout a member (requires `MUTE_MEMBERS`) |
 | `unmuteMember(tavernId, userId)` | Remove a mute (requires `MUTE_MEMBERS`) |
+| `startTyping(tavernId, channelId)` / `stopTyping(tavernId, channelId)` | Show the bot typing (about 8 seconds) |
 | `sendDM(userId, content)` | Send a direct message (opens the DM the first time) |
 | `createDM(userId)` | Open a direct message, or get the existing one |
 | `sendDMMessage(channelId, content)` | Send in a direct message that is already open |
@@ -364,7 +433,7 @@ Messages received via `messageCreate` have these helper methods:
 | Method | Description |
 |---|---|
 | `message.reply(content)` | Reply to the message |
-| `message.edit(content)` | Edit the message |
+| `message.edit(content)` | Edit the text of the bot's own message |
 | `message.delete()` | Delete the message |
 | `message.pin()` | Pin the message |
 | `message.unpin()` | Unpin the message |
