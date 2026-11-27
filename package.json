@@ -1,13 +1,13 @@
 {
   "name": "taverns.js",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "SDK for building Tavern bots for the Taverns platform",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "tsc && node --test test/voice.test.js test/security.test.js test/retry.test.js test/dm.test.js test/api.test.js",
+    "test": "tsc && tsc --noEmit --strict --target ES2020 --module commonjs --types node test/member-join-types.ts && node --test test/voice.test.js test/security.test.js test/retry.test.js test/dm.test.js test/api.test.js",
     "prepublishOnly": "npm run build"
   },
   "keywords": [

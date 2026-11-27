@@ -592,7 +592,7 @@ export class RESTClient extends EventEmitter {
         'Authorization': `Bot ${this.token}`,
         'Content-Type': 'application/json',
         'Accept': 'application/json',
-        'User-Agent': 'taverns.js/0.4.0', // keep in step with package.json (a test checks)
+        'User-Agent': 'taverns.js/0.4.1', // keep in step with package.json (a test checks)
       },
     };
 

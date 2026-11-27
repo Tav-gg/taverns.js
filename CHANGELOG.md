@@ -4,6 +4,10 @@ All notable changes to taverns.js are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/) (while the version is 0.x, a minor release can break things).
 
+## [0.4.1] - 2026-11-27
+
+- The `memberJoin` type now describes both forms of the event. Use `event.user` for the name on every join. A person joining has a `member` row. A bot installation has `isBot: true` and a `botApplicationId`. Use `getMember(event.tavernId, event.user.id)` if you need that bot's full member row.
+
 ## [0.4.0] - 2026-11-27
 
 This release makes the SDK match the Taverns API. Several calls and events did not work in 0.3.0; they do now.
@@ -169,6 +173,7 @@ published to npm.
 
 Earlier versions are described in the git history.
 
+[0.4.1]: https://github.com/Tav-gg/taverns.js/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Tav-gg/taverns.js/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Tav-gg/taverns.js/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/Tav-gg/taverns.js/tree/v0.2.1

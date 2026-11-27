@@ -126,7 +126,7 @@ client.on('messageDeleteBulk', (event) => { ... });   // { messageIds, channelId
 client.on('messagePinned', (event) => { ... });       // { messageId, channelId, tavernId, message }
 
 // Members (TAVERN_MEMBERS intent)
-client.on('memberJoin', (event) => { ... });          // { tavernId, user, member }
+client.on('memberJoin', (event) => { ... });          // use event.user for either a person or a bot
 client.on('memberLeave', (event) => { ... });         // { tavernId, userId, reason? }
 
 // Channels

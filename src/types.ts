@@ -500,7 +500,8 @@ export interface BulkDeleteEvent {
   messageIds: string[];
 }
 
-export interface MemberJoinEvent {
+/** A person joining includes the member row. A bot installation includes its application ID. */
+export type MemberJoinEvent = {
   tavernId: string;
   user: {
     id: string;
@@ -508,9 +509,10 @@ export interface MemberJoinEvent {
     avatarUrl: string | null;
     avatarAnimated?: boolean;
   };
-  /** The new member, as `getMember` returns it. */
-  member: Member;
-}
+} & (
+  | { isBot?: false; member: Member }
+  | { isBot: true; botApplicationId: string; member?: undefined }
+);
 
 export interface MemberLeaveEvent {
   userId: string;
