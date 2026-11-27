@@ -38,6 +38,7 @@
     "README.md"
   ],
   "dependencies": {
+    "@types/node": ">=18",
     "ws": "^8.21.0"
   },
   "peerDependencies": {

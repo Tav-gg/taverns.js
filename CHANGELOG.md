@@ -53,6 +53,7 @@ This release makes the SDK match the Taverns API. Several calls and events did n
 
 ### Fixed
 
+- The package declares the Node.js types used in its public TypeScript declarations. Building the SDK uses only the Node.js global types.
 - **Replying to messages works.** The channel list comes back as `{ channels, categories }`, which 0.3.0 read as a
   plain list, so the channel cache stayed empty and `message.reply()`, `edit()`, `delete()`, `pin()`, `unpin()` and
   `react()` failed (the `!ping` example too). The cache is filled now, and the message helpers use the tavern named in
